@@ -9,7 +9,7 @@ With [salt-bootstrap](https://github.com/saltstack/salt-bootstrap)
 
 Tested on OVH VPS, with debian 8 jessie.
 
-*Lecteurs francophones: Demandez une traduction de la doc, je la fournirai. ;)/)*
+*Lecteurs francophones: Demandez une traduction de la doc, je la fournirai. ;)*
 
 ## Installation
 
