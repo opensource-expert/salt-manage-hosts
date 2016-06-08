@@ -1,14 +1,15 @@
 #!/bin/bash
 #
-# for managed server, bootstrap our node
+# bootstrap minion for managed server with salt
+#
 # Usage:
-#  bootstrap-node.sh hostname.fqdn
+#  bootstrap-minion.sh hostname.fqdn
 #
-# Usage on the node:
-#  bootstrap-node.sh -n hostname.fqdn
+# Usage on the minion: (for debuging)
+#  bootstrap-minion.sh -n hostname.fqdn
 #
-# Usage in debug mode (on the node):
-#  . bootstrap-node.sh
+# Usage in debug mode (on the minion):
+#  . bootstrap-minion.sh
 #  apt_bootstrap
 #  change_hostname hostname.fqdn
 #  admin_ssh_config
@@ -16,7 +17,7 @@
 #
 # How it's desined:
 #  the same script is a wrapper to be executed on the master with argument
-#  which will be copied to the node (minion) and re-executed locally with
+#  which will be copied to the minion and re-executed locally with
 #  the good argument.
 #
 
@@ -27,6 +28,33 @@ packages_remove="joe"
 
 # SET YOUR MASTER HOST NAME HERE !
 saltmaster="saltmaster.domain.com"
+
+# whereis slat-bootstrap ?
+SALT_BOOTSTRAP=~/salt-bootstrap/bootstrap-salt.sh
+
+# ============== define functions that can be sourced for debug
+detect_path() {
+  if [[ $0 != "$BASH_SOURCE" ]]
+  then
+    #sourced
+    full_me=$(readlink -f "$BASH_SOURCE")
+  else
+    full_me=$(readlink -f "$0")
+  fi
+  me=$(basename $full_me)
+  mydir=$(dirname $full_me)
+}
+
+load_bootstrap_conf() {
+  BOOTSTRAP_CONF="$mydir/bootstrap.conf"
+  has_bootstrap_conf=false
+  # you can maintain any configuration override in that file
+  if [[ -e "$BOOTSTRAP_CONF" ]]
+  then
+    source "$BOOTSTRAP_CONF"
+    has_bootstrap_conf=true
+  fi
+}
 
 apt_bootstrap() {
   apt-get update
@@ -117,6 +145,7 @@ node_init() {
   change_hostname "$minion"
 }
 
+
 main() {
   # minion is a valid dns name to reach the host via ssh
   local minion="$1"
@@ -126,14 +155,21 @@ main() {
     minion="$2"
     node_init "$minion"
   else
-    # one-liner upload and execute the script on the node
-    cat "$0" | ssh -A -o StrictHostKeyChecking=no -q "$minion" \
-      "t=/tmp/boot;cat> \$t && bash \$t -n '$minion'; rm \$t"
+    # one-liner upload and execute the script on the minion
+    if $has_bootstrap_conf
+    then
+      tar cf - -C $mydir $me $(basename $BOOTSTRAP_CONF) | \
+        ssh -A -o StrictHostKeyChecking=no -q "$minion" \
+        "t=/tmp/boot;mkdir \$t && cd \$t && tar xf - && bash \$t/$me -n '$minion'; rm -rf \$t"
+    else
+      cat "$0" | ssh -A -o StrictHostKeyChecking=no -q "$minion" \
+        "t=/tmp/boot;cat> \$t && bash \$t -n '$minion'; rm \$t"
+    fi
     # send minion bootstrap
-    cat ~/salt-bootstrap/bootstrap-salt.sh | ssh "$minion" \
+    cat $SALT_BOOTSTRAP | ssh "$minion" \
       "t=/tmp/boot2;cat> \$t &&
       bash \$t -A $saltmaster stable ; \\
-      rm \$t"
+      rm \$t; cat /etc/salt/minion_id"
   fi
 }
 
@@ -141,6 +177,8 @@ main() {
 [[ $0 != "$BASH_SOURCE" ]] && sourced=1 || sourced=0
 if  [[ $sourced -eq 0 ]]
 then
-    # pass positional argument as is
+    detect_path
+    load_bootstrap_conf
+    # pass all positional argument as is
     main "$@"
 fi
