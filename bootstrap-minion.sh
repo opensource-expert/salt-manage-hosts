@@ -3,6 +3,7 @@
 # bootstrap minion for managed server with salt
 #
 # Usage:
+#  # call the script directly on your saltmaster
 #  bootstrap-minion.sh hostname.fqdn
 #
 # Usage on the minion: (for debuging)
@@ -14,6 +15,7 @@
 #  change_hostname hostname.fqdn
 #  admin_ssh_config
 #  …
+
 #
 # How it's desined:
 #  the same script is a wrapper to be executed on the master with argument
@@ -24,12 +26,13 @@
 # add additional package
 packages="vim git etckeeper locate"
 # joe editor par défaut ??
-packages_remove="joe"
+packages_remove="joe nano"
 
 # SET YOUR MASTER HOST NAME HERE !
 saltmaster="saltmaster.domain.com"
 
 # whereis slat-bootstrap ?
+# git clone https://github.com/saltstack/salt-bootstrap.git
 SALT_BOOTSTRAP=~/salt-bootstrap/bootstrap-salt.sh
 
 # ============== define functions that can be sourced for debug
@@ -58,8 +61,8 @@ load_bootstrap_conf() {
 
 apt_bootstrap() {
   apt-get update
-  apt-get install -y $packages
-  apt-get remove -y --purge $packages_remove
+  yes | apt-get install -y $packages
+  yes | apt-get remove -y --purge $packages_remove
 }
 
 admin_ssh_config() {
@@ -141,10 +144,26 @@ node_init() {
   local minion="$1"
   echo "node_init: $minion"
   echo "I'm $(hostname -f)"
+  fix_perl_locale_warning
+  force_local_timezone
   apt_bootstrap
   change_hostname "$minion"
 }
 
+fix_perl_locale_warning() {
+  # (in)famous:
+  # perl: warning: Falling back to a fallback locale ("en_US.UTF-8").
+  # perl: warning: Setting locale failed.
+  # perl: warning: Please check that your locale settings:
+
+  sed -i '/fr_FR.UTF-8/ s/^# //' /etc/locale.gen
+  locale-gen en_US.UTF-8
+}
+
+force_local_timezone() {
+  echo Europe/Paris > /etc/timezone
+  dpkg-reconfigure -f noninteractive tzdata
+}
 
 main() {
   # minion is a valid dns name to reach the host via ssh
@@ -152,9 +171,18 @@ main() {
 
   if [[ "$1" == '-n' ]]
   then
+    # minion mode
     minion="$2"
     node_init "$minion"
   else
+    # saltmaster mode
+
+    # remove minion known_hosts, useful on saltmaster for reinstalled minion
+    sed -i -e"/$minion/d" ~/.ssh/known_hosts
+
+    # remove accpeted key
+    salt-key -y -d $minion
+
     # one-liner upload and execute the script on the minion
     if $has_bootstrap_conf
     then
@@ -165,11 +193,16 @@ main() {
       cat "$0" | ssh -A -o StrictHostKeyChecking=no -q "$minion" \
         "t=/tmp/boot;cat> \$t && bash \$t -n '$minion'; rm \$t"
     fi
+
     # send minion bootstrap
     cat $SALT_BOOTSTRAP | ssh "$minion" \
       "t=/tmp/boot2;cat> \$t &&
       bash \$t -A $saltmaster stable ; \\
       rm \$t; cat /etc/salt/minion_id"
+
+    # accept minion's key
+    salt-key -y -a $minion
+
   fi
 }
 
@@ -177,6 +210,7 @@ main() {
 [[ $0 != "$BASH_SOURCE" ]] && sourced=1 || sourced=0
 if  [[ $sourced -eq 0 ]]
 then
+    [[ "$1" == "--help" || -z "$1" ]] && { sed -n -e '/^# Usage:/,/^$/ s/^# \?//p' < $0; exit; }
     detect_path
     load_bootstrap_conf
     # pass all positional argument as is
